@@ -48,6 +48,19 @@ solo se enlaza. Las entradas más recientes van arriba.
 
 ## Incidentes
 
+### 2026-10-12 · "Unexpected Application Error! Hey developer" tras un despliegue de la web
+
+| | |
+|---|---|
+| Detectado | El usuario, al entrar al webmail minutos después de un despliegue: `Failed to fetch dynamically imported module: .../assets/WebmailApp-CbAff20Y.js` |
+| Síntoma | Pantalla en blanco con el error técnico del enrutador y el texto "Hey developer" |
+| Impacto | Un usuario no podía entrar hasta recargar. Los registros del servidor mostraron el archivo entregado con 200 y sin ningún 4xx de esa IP: el fallo fue del lado del navegador |
+| Causa raíz | No determinada al 100%: el servidor entregó el archivo, y en un Chrome limpio la misma ruta carga completa. Lo compatible con los datos es una pestaña, caché o service worker con una versión anterior de la web tras el redespliegue (los archivos llevan huella). Lo que sí era un defecto: la aplicación no tenía pantalla de error propia ni recuperación ante ese fallo |
+| Solución | Un fallo de carga de módulo recarga la página una sola vez (`vite:preloadError` y `errorElement` de las rutas, con marca de hora en `sessionStorage` y ventana de 60 s contra bucles); si persiste, pantalla propia con "Recargar" e "Ir al inicio" y sin error técnico. Excepción de lint acotada a `staleChunk.ts` (una marca de hora, sin datos de sesión) |
+| Que no se repita | `staleChunk.test.ts` (reconoce los mensajes de Chrome, Firefox y Safari; recarga una vez; sin almacenamiento no recarga) y `RouteErrorPage.test.tsx` (nunca muestra el error técnico) |
+| Detalle | `web/src/lib/staleChunk.ts`, `web/src/layout/RouteErrorPage.tsx` |
+| Desplegado | Ver el commit de la siguiente entrada del historial |
+
 ### 2026-10-12 · El pase de automatización no podía recrear el gateway si iba por detrás del último despliegue
 
 | | |

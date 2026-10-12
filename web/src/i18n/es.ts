@@ -193,6 +193,11 @@ export const es = {
     'Si eres una persona, cierra las herramientas de automatización o de depuración remota, desactiva las extensiones que controlan el navegador y vuelve a intentarlo. Si el problema sigue, indica la referencia a tu administrador.',
   'security.automation.reference': 'Referencia:',
   'security.automation.retry': 'Volver a intentar',
+  'app.routeError.title': 'No pudimos cargar esta pantalla',
+  'app.routeError.description':
+    'Puede que la aplicación se haya actualizado mientras la tenías abierta. Recarga para continuar.',
+  'app.routeError.reload': 'Recargar',
+  'app.routeError.home': 'Ir al inicio',
   'auth.stepUp.title': 'Reconfirma tu identidad',
   'auth.stepUp.description':
     'Esta acción es crítica. Introduce tu contraseña actual y, si tienes verificación en dos pasos, el código.',

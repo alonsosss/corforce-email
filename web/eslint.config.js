@@ -65,7 +65,10 @@ export default tseslint.config(
     },
   },
   {
-    files: ['src/design/theme.ts', 'src/webmail/notifications.ts'],
+    // theme.ts y notifications.ts guardan preferencias de interfaz. staleChunk.ts guarda en
+    // sessionStorage una sola marca de hora (la ultima recarga por un archivo viejo, para no hacer
+    // un bucle): ningun dato de sesion ni de usuario.
+    files: ['src/design/theme.ts', 'src/webmail/notifications.ts', 'src/lib/staleChunk.ts'],
     rules: { 'no-restricted-globals': 'off', 'no-restricted-properties': 'off' },
   },
   {

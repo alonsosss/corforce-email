@@ -6,6 +6,7 @@ import '@/design/tokens.css';
 import '@/design/base.css';
 import '@/design/components.css';
 import { endpoints } from '@/api/endpoints';
+import { reloadOnceForStaleChunk } from '@/lib/staleChunk';
 import { registerServiceWorker } from '@/pwa/registerServiceWorker';
 import { AutomationBlockedPage } from '@/security/AutomationBlockedPage';
 import {
@@ -45,6 +46,11 @@ if (reference && mode === 'enforce') {
     </StrictMode>,
   );
 } else {
+  // Vite avisa cuando un archivo precargado de la aplicacion no se pudo traer (casi siempre, una
+  // version anterior en una pestana abierta tras un despliegue): se recarga una sola vez.
+  window.addEventListener('vite:preloadError', (event) => {
+    if (reloadOnceForStaleChunk()) event.preventDefault();
+  });
   createRoot(container).render(
     <StrictMode>
       <App />

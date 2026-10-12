@@ -3,6 +3,7 @@ import { createBrowserRouter, Navigate, RouterProvider } from 'react-router-dom'
 import { MODULES, type ModuleName } from '@/access/modules';
 import { SYSTEM_ROLES, type SystemRole } from '@/access/roles';
 import { PlatformSession } from '@/layout/PlatformSession';
+import { RouteErrorPage } from '@/layout/RouteErrorPage';
 import { RequireAuth } from '@/layout/RequireAuth';
 import { RequireModule } from '@/layout/RequireModule';
 import { Shell } from '@/layout/Shell';
@@ -332,14 +333,20 @@ export const WEBMAIL_ROUTE = `${paths.webmail}/*`;
 
 export function createAppRouter() {
   return createBrowserRouter([
-    { path: WEBMAIL_ROUTE, element: lazyElement(() => import('@/pages/webmail/WebmailApp')) },
+    {
+      path: WEBMAIL_ROUTE,
+      element: lazyElement(() => import('@/pages/webmail/WebmailApp')),
+      errorElement: <RouteErrorPage />,
+    },
     // Pagina publica de citas: sin ninguna de las dos sesiones.
     {
       path: paths.publicBookingPattern,
       element: lazyElement(() => import('@/pages/booking/PublicBookingPage')),
+      errorElement: <RouteErrorPage />,
     },
     {
       element: <PlatformSession />,
+      errorElement: <RouteErrorPage />,
       children: [
         ...PUBLIC_SCREENS.map((screen) => ({
           path: screen.path,
