@@ -5,8 +5,12 @@ RUN apk upgrade --no-cache
 LABEL maintainer = "Core Force Mail"
 
 # install unbound from alpine:edge to get security patches
-# minimum version is pinned
-RUN apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main "unbound>=1.26.1-r0"
+# minimum version is pinned; the CDN index fetch is retried because a transient TLS failure
+# makes apk fall back to the stable index, which cannot satisfy the pin
+RUN for intento in 1 2 3 4; do \
+		apk add --no-cache --repository=https://dl-cdn.alpinelinux.org/alpine/edge/main "unbound>=1.26.1-r0" && exit 0; \
+		sleep $((intento * 10)); \
+	done; exit 1
 
 # install other packages from regular alpine stable repo
 RUN apk add --update --no-cache \

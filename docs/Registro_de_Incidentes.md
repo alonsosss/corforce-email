@@ -30,6 +30,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 
 | Fecha | Incidente | Impacto | Guardarrail |
 |---|---|---|---|
+| 2026-10-12 | [`make e2e-mail` falló al construir unbound por un error TLS puntual del CDN de Alpine](#2026-10-12--make-e2e-mail-falló-al-construir-unbound-por-un-error-tls-puntual-del-cdn-de-alpine) | Ejecución nocturna en rojo y despliegue de motores retenido (#25) | Reintento en `unbound/Dockerfile` |
 | 2026-10-05 | [Escribir una respuesta podía archivar el mensaje abierto](#2026-10-05--escribir-una-respuesta-podía-archivar-el-mensaje-abierto) | Mensajes archivados sin querer al responder en el webmail | `shortcuts.test.tsx` |
 | 2026-10-04 | [La CI de integración no compilaba tras un puerto nuevo](#2026-10-04--la-ci-de-integración-no-compilaba-tras-un-puerto-nuevo) | main en rojo unos 30 min; despliegue retenido | `go vet -tags integration` en `make checks` |
 | 2026-10-04 | [La recuperación de contraseña no servía a los buzones y no lo decía](#2026-10-04--la-recuperación-de-contraseña-no-servía-a-los-buzones-y-no-lo-decía) | Un usuario de buzón esperaba un correo que nunca llegaba | `MailboxRecoveryPage.test.tsx` y `make e2e-mail` |
@@ -44,6 +45,19 @@ solo se enlaza. Las entradas más recientes van arriba.
 | 2026-10-01 | [Vulnerabilidades altas en las imágenes de los motores](#2026-10-01--vulnerabilidades-altas-en-las-imágenes-de-los-motores) | 7 CVE altas con arreglo publicado en producción | `check-motor-os-updates.sh` |
 
 ## Incidentes
+
+### 2026-10-12 · `make e2e-mail` falló al construir unbound por un error TLS puntual del CDN de Alpine
+
+| | |
+|---|---|
+| Detectado | Incidencia #25, abierta por `mail-engines.yml` (ejecución programada sobre `c738fc1`) |
+| Síntoma | `compose build` falló: `apk add` desde `edge` dio `TLS: unspecified error` al bajar el índice y después `unbound-1.25.2-r1 breaks: world[unbound>=1.26.1-r0]` |
+| Impacto | Una ejecución nocturna en rojo; `deploy-mail.sh` y `deploy-ecr.sh` retenidos hasta el siguiente verde. Sin impacto en producción |
+| Causa raíz | Fallo de red transitorio contra `dl-cdn.alpinelinux.org`: sin el índice de `edge`, apk resuelve contra el estable (1.25.2), que no cumple la versión mínima fijada. Las seis ejecuciones anteriores pasaron y `edge` publica 1.26.1-r0, así que no es un defecto de la fijación |
+| Solución | La instalación de unbound desde `edge` se reintenta 4 veces con espera creciente (`deploy/mail/unbound/Dockerfile`) |
+| Que no se repita | El reintento. No hay check posible para un fallo de red ajeno: si el CDN cae más de un minuto, la incidencia `e2e-motores` lo sigue avisando |
+| Detalle | `deploy/mail/UPSTREAM.md`, fila de `unbound/Dockerfile` |
+| Desplegado | No aplica (la imagen no cambia de contenido; se reconstruye en el próximo despliegue de motores) |
 
 ### 2026-10-04 · La CI de integración no compilaba tras un puerto nuevo
 
