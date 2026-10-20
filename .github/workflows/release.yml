@@ -151,7 +151,7 @@ jobs:
           fi
 
       - if: steps.detect.outputs.services != '' && steps.publish.outputs.enabled == 'true'
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ECR_ROLE_ARN }}
           aws-region: ${{ env.ECR_REGION }}
@@ -202,7 +202,7 @@ jobs:
         with: { fetch-depth: 0 }
 
       # El mismo rol OIDC que publica a ECR. Aqui se usa para hablar con SSM.
-      - uses: aws-actions/configure-aws-credentials@v4
+      - uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.AWS_ECR_ROLE_ARN }}
           aws-region: ${{ env.ECR_REGION }}
