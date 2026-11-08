@@ -34,6 +34,12 @@ export interface PrepareOptions {
    * origen: una URL remota directa que se escapara al servicio se quita igual.
    */
   remoteImageProxy?: string;
+  /**
+   * El marco mide su documento y crece hasta su alto (HtmlPreviewFrame con autoHeight): el
+   * documento no debe mostrar su propia barra vertical, que aparece en cuanto una barra
+   * horizontal le quita unos pixeles al alto.
+   */
+  hideVerticalScroll?: boolean;
 }
 
 interface ImageProxy {
@@ -199,6 +205,11 @@ export function prepareUntrustedHtml(source: string, options: PrepareOptions): P
     const base = doc.createElement('base');
     base.setAttribute('target', '_blank');
     doc.head.prepend(base);
+  }
+  if (options.hideVerticalScroll) {
+    const style = doc.createElement('style');
+    style.textContent = 'html{overflow-y:hidden}';
+    doc.head.prepend(style);
   }
   const referrer = doc.createElement('meta');
   referrer.setAttribute('name', 'referrer');

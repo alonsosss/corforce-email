@@ -35,4 +35,9 @@ describe('marco del correo recibido', () => {
     expect(tokens).toContain('allow-same-origin');
     expect(tokens).not.toContain('allow-scripts');
   });
+
+  it('con autoHeight el documento no muestra barra vertical propia', () => {
+    render(<HtmlPreviewFrame html="<p>x</p>" title="correo" allowLinks autoHeight />);
+    expect(screen.getByTitle('correo').getAttribute('srcdoc')).toContain('overflow-y:hidden');
+  });
 });

@@ -88,8 +88,9 @@ export function HtmlPreviewFrame({
         inlineImages,
         openLinksInNewTab: allowLinks,
         remoteImageProxy,
+        hideVerticalScroll: autoHeight,
       }),
-    [html, allow, inlineImages, allowLinks, remoteImageProxy],
+    [html, allow, inlineImages, allowLinks, remoteImageProxy, autoHeight],
   );
 
   return (
