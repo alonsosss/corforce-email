@@ -395,7 +395,8 @@ servir, `blocked` sigue `true`.
   las envía, y aceptarlas reabriría la fuga).
 - `contentSecurityPolicy(allow)`: `img-src data: <origen del API>` en lugar de `img-src data: https: http:`
   (el origen explícito, no `'self'`: en un iframe `sandbox` sin `allow-same-origin` `'self'` no casa con el
-  origen de la aplicación). Sin permiso, `img-src data:` como ahora.
+  origen de la aplicación; el lector hoy lo lleva solo para medir el alto, sin scripts, y el origen
+  explícito sigue siendo lo correcto). Sin permiso, `img-src data:` como ahora.
 - `MessageBody` y la impresión (`print.ts`) siguen pasando `allowRemoteImages` solo si
   `!remote_images.blocked`; el tipo `remote_images` añade `proxied: boolean`.
 - Seguridad: activar la verificación responde `other_sessions_closed` y renueva `cf_wm` (6.1); si la

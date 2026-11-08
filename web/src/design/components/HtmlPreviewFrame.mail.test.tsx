@@ -28,4 +28,11 @@ describe('marco del correo recibido', () => {
     render(<HtmlPreviewFrame html={HTML} title="plantilla" />);
     expect(screen.getByTitle('plantilla')).toHaveAttribute('sandbox', '');
   });
+
+  it('con autoHeight suma allow-same-origin para medir y sigue sin scripts', () => {
+    render(<HtmlPreviewFrame html="<p>x</p>" title="correo" allowLinks autoHeight />);
+    const tokens = (screen.getByTitle('correo').getAttribute('sandbox') ?? '').split(/\s+/);
+    expect(tokens).toContain('allow-same-origin');
+    expect(tokens).not.toContain('allow-scripts');
+  });
 });

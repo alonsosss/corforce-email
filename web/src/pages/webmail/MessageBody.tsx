@@ -19,7 +19,7 @@ import { displayFilename } from './format';
 import { referencedInlineParts } from './inlineImages';
 import { splitQuotedHtml, splitQuotedText } from './quotedHistory';
 
-const FRAME_HEIGHT = '60vh';
+const FRAME_HEIGHT = '85vh';
 const FRAME_MIN_PX = 120;
 const FRAME_LINE_PX = 24;
 const FRAME_PADDING_PX = 48;
@@ -112,6 +112,7 @@ export function MessageBody({
             inlineImages={inlineImages}
             remoteImageProxy={webmailImageProxyUrl()}
             allowLinks
+            autoHeight
           />
         </>
       ) : plain ? (

@@ -438,7 +438,7 @@ a.cf-wm-message:hover {
   gap: var(--cf-space-4);
   flex: 1;
   width: 100%;
-  max-width: 1000px;
+  max-width: 1280px;
   margin: 0 auto;
 }
 .cf-wm-reader__toolbar {
@@ -483,13 +483,11 @@ a.cf-wm-message:hover {
   font-size: var(--cf-text-sm);
 }
 .cf-wm-reader__body {
-  padding: var(--cf-space-4);
-  border-radius: var(--cf-radius-lg);
-  background: var(--cf-surface-muted);
-  border: 1px solid var(--cf-border);
+  padding: 0;
 }
 .cf-wm-reader__body .cf-preview-frame {
-  border-radius: var(--cf-radius-md);
+  border: 0;
+  border-radius: 0;
 }
 .cf-wm-reader__body .cf-wm-text {
   padding: var(--cf-space-2);
@@ -976,9 +974,6 @@ a.cf-wm-message:hover {
   }
   .cf-wm-composer .cf-wm-compose {
     padding: 0 var(--cf-space-4);
-  }
-  .cf-wm-reader__body {
-    padding: var(--cf-space-2);
   }
   .cf-wm-inline-reply {
     grid-template-columns: minmax(0, 1fr);

@@ -204,8 +204,12 @@ rechaza, sin buscarlo en Redis, el token de otra celda (401 y la cookie se borra
 cambiado solo llega a una celda donde esa sesión no existe (`Modelo_de_Datos_y_Celdas.md`, 5.5).
 
 El HTML de un mensaje llega ya saneado (bluemonday) dentro del JSON. La interfaz debe
-pintarlo en un `<iframe sandbox>` sin `allow-scripts` ni `allow-same-origin`: el saneado es
-la primera barrera y el aislamiento la segunda.
+pintarlo en un `<iframe sandbox>` sin `allow-scripts`: el saneado es la primera barrera y el
+aislamiento la segunda. El lector de correo suma `allow-same-origin` (solo con `autoHeight`
+de `HtmlPreviewFrame`) para medir el alto del documento y que el marco crezca sin scroll
+interno. Es seguro porque el marco nunca lleva `allow-scripts` y la CSP del documento
+(`default-src 'none'`) tampoco admite scripts: lo que no se permite es combinar ambos. Plantillas,
+avisos y vistas previas siguen con sandbox vacío.
 
 ## Límites de peticiones del gateway
 

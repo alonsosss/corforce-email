@@ -225,7 +225,7 @@ describe('historial citado en el lector', () => {
   });
 
   it('el marco de un mensaje corto no ocupa media pantalla; uno con imagenes si', () => {
-    expect(estimateFrameHeight('<p>Hola</p>')).toBe('min(60vh, 120px)');
-    expect(estimateFrameHeight('<p>Hola</p><img src="x">')).toBe('60vh');
+    expect(estimateFrameHeight('<p>Hola</p>')).toBe('min(85vh, 120px)');
+    expect(estimateFrameHeight('<p>Hola</p><img src="x">')).toBe('85vh');
   });
 });

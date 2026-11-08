@@ -97,8 +97,8 @@ describe('lectura de un mensaje', () => {
     const frame = await screen.findByTitle(bodyTitle);
     const sandbox = frame.getAttribute('sandbox') ?? '';
     expect(sandbox).not.toContain('allow-scripts');
-    expect(sandbox).not.toContain('allow-same-origin');
     expect(sandbox).not.toContain('allow-top-navigation');
+    expect(sandbox).not.toContain('allow-forms');
     expect(frame.getAttribute('srcdoc')).toContain('Hola mundo');
     expect(screen.queryByText('Hola mundo')).toBeNull();
   });

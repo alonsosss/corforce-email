@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { prepareUntrustedHtml } from '@/lib/untrustedHtml';
 import { IconImage } from '../icons';
 import { Button } from './Button';
@@ -25,9 +25,17 @@ export interface HtmlPreviewFrameProps {
   allowLinks?: boolean;
   /** Proxy de imagenes del mismo origen: mostrar las remotas solo admite las que pasan por el. */
   remoteImageProxy?: string;
+  /**
+   * El marco crece hasta el alto de su contenido y la pagina es la unica que se desplaza.
+   * Exige allow-same-origin para medirlo; sigue sin allow-scripts, y la CSP del documento
+   * (default-src 'none') tambien los bloquea, asi que el HTML ajeno no puede ejecutar nada.
+   * Solo para correo recibido; `height` hace de alto minimo mientras se mide.
+   */
+  autoHeight?: boolean;
 }
 
 const LINKS_SANDBOX = 'allow-popups allow-popups-to-escape-sandbox';
+const MEASURE_SANDBOX = 'allow-same-origin';
 
 /**
  * Unico sitio donde se pinta HTML que no es de la aplicacion (plantillas, pies de pagina,
@@ -43,7 +51,33 @@ export function HtmlPreviewFrame({
   inlineImages,
   allowLinks = false,
   remoteImageProxy,
+  autoHeight = false,
 }: HtmlPreviewFrameProps) {
+  const frameRef = useRef<HTMLIFrameElement>(null);
+  const observer = useRef<ResizeObserver | null>(null);
+  const [measured, setMeasured] = useState<number | null>(null);
+  const sandbox = [allowLinks ? LINKS_SANDBOX : '', autoHeight ? MEASURE_SANDBOX : '']
+    .filter(Boolean)
+    .join(' ');
+
+  const measure = useCallback(() => {
+    const doc = frameRef.current?.contentDocument;
+    if (!doc?.documentElement) return;
+    const px = Math.ceil(doc.documentElement.scrollHeight);
+    if (Number.isFinite(px) && px > 0) setMeasured(px);
+  }, []);
+
+  const attach = useCallback(() => {
+    observer.current?.disconnect();
+    measure();
+    const doc = frameRef.current?.contentDocument;
+    if (!doc?.body || typeof ResizeObserver === 'undefined') return;
+    observer.current = new ResizeObserver(measure);
+    observer.current.observe(doc.body);
+  }, [measure]);
+
+  useEffect(() => () => observer.current?.disconnect(), []);
+
   const [showRemote, setShowRemote] = useState(false);
   const controlled = allowRemoteImages !== undefined;
   const allow = controlled ? allowRemoteImages : showRemote;
@@ -74,12 +108,14 @@ export function HtmlPreviewFrame({
         </div>
       ) : null}
       <iframe
+        ref={frameRef}
         className="cf-preview-frame"
         title={title}
-        sandbox={allowLinks ? LINKS_SANDBOX : ''}
+        sandbox={sandbox}
         referrerPolicy="no-referrer"
         srcDoc={prepared.html}
-        style={{ height }}
+        onLoad={autoHeight ? attach : undefined}
+        style={autoHeight && measured !== null ? { height: measured } : { height }}
       />
     </div>
   );
