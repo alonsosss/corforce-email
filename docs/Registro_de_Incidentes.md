@@ -294,3 +294,15 @@ solo se enlaza. Las entradas más recientes van arriba.
 | Que no se repita | `ops/scaffold/check-motor-os-updates.sh` (en `make checks`); el escaneo mensual sigue abriendo una incidencia por cada vulnerabilidad nueva |
 | Detalle | `deploy/mail/UPSTREAM.md`, sección 9 |
 | Desplegado | 2026-10-01, todos los motores; la #22 la cerró el escaneo relanzado |
+
+### 2026-11-08 · La CI en rojo por tres vulnerabilidades alcanzables de Go
+
+| | |
+|---|---|
+| Detectado | El job `Backend (Go)` de la CI del commit `6d7bd2c`, paso `Vulnerabilidades alcanzables (Go)` (`govulncheck`); la puerta de `deploy-ecr.sh` se negó a desplegar |
+| Síntoma | GO-2026-6866 y GO-2026-6860 en `golang.org/x/net` v0.60.0 (`templates`: `landing.embedForms`, `deliverability.inspect`) y GO-2026-6809 en `crypto/x509` de go1.26.9 (`webmail`: `smtp.Sender.Send`) |
+| Impacto | Sin despliegue posible hasta resolverlo; ninguna explotación conocida, el cambio de web que lo destapó no tocaba Go |
+| Causa raíz | Avisos publicados después de la última CI verde: el código no cambió, cambió la base de vulnerabilidades |
+| Solución | `go 1.26.10` y `golang.org/x/net` v0.62.0 (con sus `x/crypto`, `x/sync`, `x/sys` y `x/text`); `govulncheck ./...` sin alcanzables, `go vet`, pruebas de `templates`, `webmail` y `pkg` y `make checks` en verde |
+| Que no se repita | Ya existe: la puerta `govulncheck` de la CI y la puerta de CI de `deploy-ecr.sh` frenaron el despliegue. No se puede evitar que se publiquen avisos nuevos; el guardarrail es detectarlos antes de desplegar |
+| Desplegado | Pendiente: afecta a `templates` y `webmail` |
