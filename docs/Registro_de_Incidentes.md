@@ -30,6 +30,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 
 | Fecha | Incidente | Impacto | Guardarrail |
 |---|---|---|---|
+| 2026-11-20 | [La CI en rojo por GO-2026-6859 en net/http de Go 1.26.10](#2026-11-20--la-ci-en-rojo-por-go-2026-6859-en-nethttp-de-go-12610) | Puerta de `govulncheck` en rojo en `main`; despliegue retenido; sin impacto en producción | La puerta `govulncheck` de la CI y la de `deploy-ecr.sh` |
 | 2026-11-20 | [`make e2e-mail` esperaba la cola diferida y Postfix tenía el mensaje en activa](#2026-11-20--make-e2e-mail-esperaba-la-cola-diferida-y-postfix-tenia-el-mensaje-en-activa) | Ejecución nocturna en rojo (#46, antes #39) y despliegue de motores retenido; sin impacto en producción | `make e2e-mail` cuenta la cola activa y la diferida |
 | 2026-10-12 | [Las reservas de citas y los recordatorios fallaban con 503 por el límite de mail-directory](#2026-10-12--las-reservas-de-citas-y-los-recordatorios-fallaban-con-503-por-el-límite-de-mail-directory) | `make e2e-mail` en rojo en `main` (#29); nada llegó a producción | `make e2e-mail` y `ratelimit_test.go` |
 | 2026-10-12 | [La CI quedó en rojo por 11 vulnerabilidades alcanzables de Go publicadas ese día](#2026-10-12--la-ci-quedó-en-rojo-por-11-vulnerabilidades-alcanzables-de-go-publicadas-ese-día) | CI en rojo unas 3 horas; despliegue retenido | `govulncheck` en la CI y Go atado a `go.mod` |
@@ -100,6 +101,18 @@ solo se enlaza. Las entradas más recientes van arriba.
 | Que no se repita | `WebmailApp.test.tsx` (tras el cierre no se arrastra la dirección, sin sesión sí) y las pruebas del store; probado que la prueba falla sin el arreglo |
 | Detalle | `web/src/pages/webmail/WebmailApp.tsx`, `web/src/webmail/store.ts` |
 | Desplegado | 2026-10-12, `1f7b494` (web) |
+
+### 2026-11-20 · La CI en rojo por GO-2026-6859 en net/http de Go 1.26.10
+
+| | |
+|---|---|
+| Detectado | Job `Backend (Go)` de la CI de `480ec42`, paso `Vulnerabilidades alcanzables (Go)`; el resto de pasos pasó |
+| Síntoma | GO-2026-6859, caída del servidor HTTP/1 por una carrera de cabeceras en `MaxBytesReader` de `net/http` go1.26.10, alcanzable desde `pkg/observability`, `mail-dav`, `webmail` y `automations` |
+| Impacto | Despliegue retenido por la puerta de CI de `deploy-ecr.sh` hasta resolverlo; ninguna explotación conocida y el cambio que lo destapó solo tocaba una prueba |
+| Causa raíz | Aviso publicado después de la última CI verde: el código no cambió, cambió la base de vulnerabilidades |
+| Solución | `go 1.26.11`, que lo corrige; `govulncheck ./...` sin alcanzables, `go build`, `go vet` y `make checks` en verde |
+| Que no se repita | Ya existe: la puerta `govulncheck` de la CI y la de `deploy-ecr.sh`. No se puede evitar que se publiquen avisos nuevos; el guardarrail es detectarlos antes de desplegar |
+| Desplegado | Pendiente: afecta a todos los servicios Go |
 
 ### 2026-11-20 · `make e2e-mail` esperaba la cola diferida y Postfix tenía el mensaje en activa
 
