@@ -2339,8 +2339,13 @@ continua_en_cola "$QID2" && ok "el otro mensaje no se toco" || mal "el otro mens
 
 # El monitor de mail-security (consulta cada 10 s en la prueba) publica la cola como metricas.
 metrica_cola() { curl -s "http://127.0.0.1:${PORT[mail-security]}/metrics" | awk -v q="$1" '$1 == "mail_security_postfix_queue_messages{queue=\"" q "\"}" { print $2 }'; }
-cola_vista_por_prometheus() { [[ "$(metrica_cola deferred)" -ge 1 ]] 2>/dev/null; }
-esperar "mail-security publica la cola diferida como metrica" 40 cola_vista_por_prometheus
+# Tras el vaciado Postfix reintenta el mensaje que queda y puede tenerlo en active mientras dura la entrega: se cuenta lo que sigue en la cola, diferido o activo.
+cola_vista_por_prometheus() {
+  local diferidos activos
+  diferidos=$(metrica_cola deferred) activos=$(metrica_cola active)
+  [[ $(( ${diferidos:-0} + ${activos:-0} )) -ge 1 ]] 2>/dev/null
+}
+esperar "mail-security publica la cola (diferida o activa) como metrica" 40 cola_vista_por_prometheus
 contains "y el instante de la ultima consulta correcta" "$(curl -s "http://127.0.0.1:${PORT[mail-security]}/metrics")" "mail_security_postfix_queue_last_poll_success_timestamp_seconds 1"
 antiguo=$(curl -s "http://127.0.0.1:${PORT[mail-security]}/metrics" | python3 -c 'import sys
 for l in sys.stdin:

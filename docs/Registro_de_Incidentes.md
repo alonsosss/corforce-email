@@ -30,6 +30,7 @@ solo se enlaza. Las entradas más recientes van arriba.
 
 | Fecha | Incidente | Impacto | Guardarrail |
 |---|---|---|---|
+| 2026-11-20 | [`make e2e-mail` esperaba la cola diferida y Postfix tenía el mensaje en activa](#2026-11-20--make-e2e-mail-esperaba-la-cola-diferida-y-postfix-tenia-el-mensaje-en-activa) | Ejecución nocturna en rojo (#46, antes #39) y despliegue de motores retenido; sin impacto en producción | `make e2e-mail` cuenta la cola activa y la diferida |
 | 2026-10-12 | [Las reservas de citas y los recordatorios fallaban con 503 por el límite de mail-directory](#2026-10-12--las-reservas-de-citas-y-los-recordatorios-fallaban-con-503-por-el-límite-de-mail-directory) | `make e2e-mail` en rojo en `main` (#29); nada llegó a producción | `make e2e-mail` y `ratelimit_test.go` |
 | 2026-10-12 | [La CI quedó en rojo por 11 vulnerabilidades alcanzables de Go publicadas ese día](#2026-10-12--la-ci-quedó-en-rojo-por-11-vulnerabilidades-alcanzables-de-go-publicadas-ese-día) | CI en rojo unas 3 horas; despliegue retenido | `govulncheck` en la CI y Go atado a `go.mod` |
 | 2026-10-12 | [`make e2e-mail` falló al construir unbound por un error TLS puntual del CDN de Alpine](#2026-10-12--make-e2e-mail-falló-al-construir-unbound-por-un-error-tls-puntual-del-cdn-de-alpine) | Ejecución nocturna en rojo y despliegue de motores retenido (#25) | `check-unbound-install-retry.sh` |
@@ -99,6 +100,19 @@ solo se enlaza. Las entradas más recientes van arriba.
 | Que no se repita | `WebmailApp.test.tsx` (tras el cierre no se arrastra la dirección, sin sesión sí) y las pruebas del store; probado que la prueba falla sin el arreglo |
 | Detalle | `web/src/pages/webmail/WebmailApp.tsx`, `web/src/webmail/store.ts` |
 | Desplegado | 2026-10-12, `1f7b494` (web) |
+
+### 2026-11-20 · `make e2e-mail` esperaba la cola diferida y Postfix tenía el mensaje en activa
+
+| | |
+|---|---|
+| Detectado | Incidencia #46, abierta por la ejecución programada sobre `f2b8fb0` (el 8 nov fue la #39, cerrada por el siguiente verde) |
+| Síntoma | `FALLA mail-security publica la cola diferida como metrica (sin exito en 40s)`; el resto del bloque de la cola pasó, incluida la métrica del mensaje más antiguo |
+| Impacto | Una ejecución nocturna en rojo; `deploy-mail.sh` y `deploy-ecr.sh` retenidos hasta el siguiente verde. Sin impacto en producción: el monitor publicaba la cola bien |
+| Causa raíz | Tras `flush` Postfix reintenta el mensaje que queda y, si la entrega tarda, lo mantiene en `active` más de 40 s. La métrica `mail_security_postfix_queue_messages` con `queue="deferred"` vale entonces 0 aunque la cola no esté vacía. La prueba ya admitía `active` o `deferred` en el paso anterior, pero este exigía solo `deferred`; depende de lo que tarde la entrega en esa máquina |
+| Solución | La prueba suma las series `deferred` y `active` y espera que sean al menos 1 |
+| Que no se repita | `ops/e2e/mail.sh` ya no depende del estado transitorio del mensaje: se cuenta lo que Prometheus debe ver, un mensaje en la cola |
+| Detalle | `ops/e2e/mail.sh`, bloque del gestor de la cola |
+| Desplegado | No aplica (solo cambia la prueba) |
 
 ### 2026-10-12 · Las reservas de citas y los recordatorios fallaban con 503 por el límite de mail-directory
 
